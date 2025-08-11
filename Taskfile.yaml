@@ -1,0 +1,38 @@
+version: 3
+
+vars:
+  ARCH:
+    sh: |
+      case $(uname -m) in
+        x86_64) echo x86 ;;
+        aarch64) echo arm64 ;;
+        armv7l) echo arm ;;
+        riscv64) echo riscv ;;
+        *) echo unknown ;;
+      esac
+
+tasks:
+  bpf-compile:
+    desc: "Компилирует"
+    cmds:
+      - for: [ common, parser, tp ]
+        task: bpf-compile-clang
+        vars:
+          BPF_SRC_DIR: "kprog/src/{{.ITEM}}"
+          BPF_OBJ_DIR: "kprog/obj/{{.ITEM}}"
+
+  bpf-compile-clang:
+    desc: "Компилирует ebpf файлы с помощью clang"
+    vars:
+      BPF_HEADER_DIR: "/kprog/src/headers"
+      BPF_SRC_FILES:
+        sh: find {{.BPF_SRC_DIR}} -name '*.bpf.c'
+      CFLAGS: "-target bpf -D__TARGET_ARCH_{{.ARCH}} -g -O2 -Wall"
+    cmds:
+      - for:
+          var: BPF_SRC_FILES
+          as: FILE
+        cmd: |
+          OUT={{.BPF_OBJ_DIR}}/{{.FILE | base | replace ".c" ".o"}}
+          clang {{.CFLAGS}} -c {{.FILE}} -o $OUT -I.{{.BPF_HEADER_DIR}}
+          echo "✔ Compiled {{.FILE}} → $OUT"
