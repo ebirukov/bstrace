@@ -1,16 +1,19 @@
 package strace
 
 import (
+	"bytes"
+	"embed"
+	"fmt"
 	"github.com/cilium/ebpf"
 	"github.com/ebirukov/bstrace"
 	"io/fs"
 	"log"
 )
 
-func LoadBpfObjects() (TracepointsObjs, error) {
-	sharedSpec, err := ebpf.LoadCollectionSpec("kprog/obj/common/shared.bpf.o")
+func (l *BPFLoader) LoadBpfObjects(tpProgObjs any) error {
+	sharedSpec, err := l.LoadObjSpec("kprog/obj/common/shared.bpf.o")
 	if err != nil {
-		log.Fatalf("Error reading ebpf program file: %v", err)
+		return fmt.Errorf("error reading ebpf obj file: %w", err)
 	}
 
 	sharedObjs := struct {
@@ -18,7 +21,7 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 	}{}
 
 	if err := sharedSpec.LoadAndAssign(&sharedObjs, nil); err != nil {
-		log.Fatalf("Error loading shared objects: %v", err)
+		return fmt.Errorf("error loading shared objects: %w", err)
 	}
 
 	var scDataMap = sharedObjs.SysCallDataMap
@@ -26,26 +29,28 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 	defer scDataMap.Close()
 
 	// load tracepoint programs
-	tpProgSpec, err := ebpf.LoadCollectionSpec("kprog/obj/tp/strace.bpf.o")
+	tpProgSpec, err := l.LoadObjSpec("kprog/obj/tp/strace.bpf.o")
 	if err != nil {
-		log.Fatalf("Error reading ebpf program file: %v", err)
+		return fmt.Errorf("error reading ebpf program file: %w", err)
 	}
 
-	tpProgObjs := TracepointsObjs{}
-
-	err = tpProgSpec.LoadAndAssign(&tpProgObjs, &ebpf.CollectionOptions{
+	err = tpProgSpec.LoadAndAssign(tpProgObjs, &ebpf.CollectionOptions{
 		MapReplacements: map[string]*ebpf.Map{
 			"sc_data": scDataMap,
 		},
 	})
 	if err != nil {
-		log.Fatalf("Error loading ebpf strace program: %v", err)
+		return fmt.Errorf("error loading ebpf tracepoint programs: %w", err)
 	}
 
-	// load syscall parser programs
+	return nil
+}
+
+// LoadParsers load syscall parser programs
+func (l *BPFLoader) LoadParsers(progMap *ebpf.Map, scDataMap *ebpf.Map) error {
 	dir, err := fs.ReadDir(bstrace.BpfObjFS, "kprog/obj/parser")
 	if err != nil {
-		log.Fatalf("Error reading ebpf program directory: %v", err)
+		return fmt.Errorf("error reading ebpf program directory: %w", err)
 	}
 
 	var parserCollections []*ebpf.Collection
@@ -63,9 +68,9 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 			continue
 		}
 
-		spec, err := ebpf.LoadCollectionSpec("kprog/obj/parser/" + d.Name())
+		spec, err := l.LoadObjSpec("kprog/obj/parser/" + d.Name())
 		if err != nil {
-			log.Fatalf("Error reading ebpf program file: %v", err)
+			return fmt.Errorf("error reading ebpf program file: %w", err)
 		}
 
 		parserCollection, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{
@@ -74,7 +79,7 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 			},
 		})
 		if err != nil {
-			log.Fatalf("Error loading parser collection %s: %v", parserCollection, err)
+			return fmt.Errorf("error loading parser collection %s: %w", parserCollection, err)
 		}
 
 		parserCollections = append(parserCollections, parserCollection)
@@ -85,7 +90,7 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 			for scName, v := range parserCollection.Variables {
 				if scName == "SC_NR" {
 					if err := v.Get(&syscallNR); err != nil {
-						log.Fatalf("Error read %s variable for func %s: %v; var spec: %v", scName, name, err, parserCollection.Variables)
+						return fmt.Errorf("error read %s variable for func %s: %w; var spec: %v", scName, name, err, parserCollection.Variables)
 					}
 					break
 				}
@@ -93,14 +98,36 @@ func LoadBpfObjects() (TracepointsObjs, error) {
 				log.Printf("Not found variable '%s' for func %s; available var: %v", scName, name, parserCollection.Variables)
 			}
 
-			err = tpProgObjs.ProgMap.Put(syscallNR, program)
+			err = progMap.Put(syscallNR, program)
 			if err != nil {
-				log.Fatalf("Error putting program %s to map: %v", name, err)
+				return fmt.Errorf("error putting program %s to map: %w", name, err)
 			}
 
 			log.Printf("Store program syscall %d from %s to prog array", syscallNR, name)
 		}
 	}
 
-	return tpProgObjs, nil
+	return nil
+}
+
+type BPFLoader struct {
+	fs embed.FS
+}
+
+func NewLoader(fs embed.FS) *BPFLoader {
+	return &BPFLoader{fs: fs}
+}
+
+func (l *BPFLoader) LoadObjSpec(file string) (*ebpf.CollectionSpec, error) {
+	data, err := l.fs.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("could not read embedded bpf object: %w", err)
+	}
+
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("error reading ebpf program file: %w", err)
+	}
+
+	return spec, err
 }

@@ -12,6 +12,15 @@ struct cdata {
     s32 syscall_ret;
 };
 
+struct syscall_args {
+    __u64 arg1;
+    __u64 arg2;
+    __u64 arg3;
+    __u64 arg4;
+    __u64 arg5;
+    __u64 arg6;
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 10240);

@@ -16,8 +16,9 @@ struct {
     __uint(max_entries, 1 << 12);
 } evt_buf SEC(".maps");
 
+
 SEC("raw_tp/sys_enter")
-int BPF_PROG(sc_enter, struct pt_regs *regs, __s64 syscall_nr)
+int BPF_PROG(sc_enter, struct pt_regs *pt_regs, __s64 syscall_nr)
 {
     bpf_tail_call(ctx, &sc_parsers, syscall_nr);
 
@@ -27,19 +28,14 @@ int BPF_PROG(sc_enter, struct pt_regs *regs, __s64 syscall_nr)
 SEC("raw_tp/sys_exit")
 int BPF_PROG(sc_exit, struct pt_regs *regs, __s64 ret)
 {
-    unsigned long syscall_nr = BPF_CORE_READ(regs, orig_ax);
-    if (syscall_nr != 321 /*&& syscall_nr != 1*/)
-        return 0;
-
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 tid = pid_tgid;
 
     struct cdata *info = bpf_map_lookup_elem(&sc_data, &tid);
     if (!info) {
-        bpf_printk("syscall no info\n");
-
         return 0;
     }
+    //unsigned long syscall_nr = info->syscall_ret; //BPF_CORE_READ(regs, orig_ax);
 
     info->syscall_ret = ret;
 

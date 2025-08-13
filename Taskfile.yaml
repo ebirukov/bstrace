@@ -20,6 +20,17 @@ tasks:
         vars:
           BPF_SRC_DIR: "kprog/src/{{.ITEM}}"
           BPF_OBJ_DIR: "kprog/obj/{{.ITEM}}"
+          CFLAGS: "-D__TARGET_ARCH_{{.ARCH}} -g -O2 -Wall"
+
+  bpf-compile-test:
+    desc: "Компилирует для тестов"
+    cmds:
+      - for: [ common, parser, tp ]
+        task: bpf-compile-clang
+        vars:
+          BPF_SRC_DIR: "kprog/src/{{.ITEM}}"
+          BPF_OBJ_DIR: "bpf_test/kprog/obj/{{.ITEM}}"
+          CFLAGS: "-D__TARGET_ARCH_{{.ARCH}} -D__TEST_RUN -g -O2 -Wall"
 
   bpf-compile-clang:
     desc: "Компилирует ebpf файлы с помощью clang"
@@ -27,12 +38,15 @@ tasks:
       BPF_HEADER_DIR: "/kprog/src/headers"
       BPF_SRC_FILES:
         sh: find {{.BPF_SRC_DIR}} -name '*.bpf.c'
-      CFLAGS: "-target bpf -D__TARGET_ARCH_{{.ARCH}} -g -O2 -Wall"
     cmds:
       - for:
           var: BPF_SRC_FILES
           as: FILE
         cmd: |
+          mkdir -p {{.BPF_OBJ_DIR}}
           OUT={{.BPF_OBJ_DIR}}/{{.FILE | base | replace ".c" ".o"}}
-          clang {{.CFLAGS}} -c {{.FILE}} -o $OUT -I.{{.BPF_HEADER_DIR}}
-          echo "✔ Compiled {{.FILE}} → $OUT"
+          # выполняем только если исходный файл изменялся после последней компиляции
+          if [ ! -f "$OUT" ] || [ {{.FILE}} -nt "$OUT" ]; then
+            clang -target bpf {{.CFLAGS}} -c {{.FILE}} -o $OUT -I.{{.BPF_HEADER_DIR}}
+            echo "✔ Compiled {{.FILE}} → $OUT"
+          fi
