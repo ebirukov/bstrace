@@ -5,12 +5,18 @@ import (
 	"io"
 )
 
-type CommonObjs struct {
-	ParserProgramArray *ebpf.Map `ebpf:"progs"`
+type SharedObjs struct {
+	SysCallDataMap *ebpf.Map `ebpf:"sc_data"`
 }
 
-func (co *CommonObjs) Close() error {
-	return close(co.ParserProgramArray)
+func (co *SharedObjs) Close() error {
+	return close(co.SysCallDataMap)
+}
+
+func (co *SharedObjs) Maps() map[string]*ebpf.Map {
+	return map[string]*ebpf.Map{
+		"sc_data": co.SysCallDataMap,
+	}
 }
 
 type TracepointsObjs struct {
@@ -29,6 +35,11 @@ func (tpo *TracepointsObjs) Close() error {
 		tpo.SyscallEnter,
 		tpo.SyscallExit,
 	)
+}
+
+type BpfObjs struct {
+	SharedObjs      *SharedObjs
+	TracepointsObjs *TracepointsObjs
 }
 
 func close(closers ...io.Closer) error {

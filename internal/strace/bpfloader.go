@@ -8,25 +8,18 @@ import (
 	"github.com/ebirukov/bstrace"
 	"io/fs"
 	"log"
+	"path/filepath"
 )
 
-func (l *BPFLoader) LoadBpfObjects(tpProgObjs any) error {
+func (l *BPFLoader) LoadBpfObjects(bpfObjs *BpfObjs) error {
 	sharedSpec, err := l.LoadObjSpec("kprog/obj/common/shared.bpf.o")
 	if err != nil {
 		return fmt.Errorf("error reading ebpf obj file: %w", err)
 	}
 
-	sharedObjs := struct {
-		SysCallDataMap *ebpf.Map `ebpf:"sc_data"`
-	}{}
-
-	if err := sharedSpec.LoadAndAssign(&sharedObjs, nil); err != nil {
+	if err := sharedSpec.LoadAndAssign(bpfObjs.SharedObjs, nil); err != nil {
 		return fmt.Errorf("error loading shared objects: %w", err)
 	}
-
-	var scDataMap = sharedObjs.SysCallDataMap
-
-	defer scDataMap.Close()
 
 	// load tracepoint programs
 	tpProgSpec, err := l.LoadObjSpec("kprog/obj/tp/strace.bpf.o")
@@ -34,32 +27,58 @@ func (l *BPFLoader) LoadBpfObjects(tpProgObjs any) error {
 		return fmt.Errorf("error reading ebpf program file: %w", err)
 	}
 
-	err = tpProgSpec.LoadAndAssign(tpProgObjs, &ebpf.CollectionOptions{
-		MapReplacements: map[string]*ebpf.Map{
-			"sc_data": scDataMap,
-		},
-	})
-	if err != nil {
+	if err = tpProgSpec.LoadAndAssign(bpfObjs.TracepointsObjs, &ebpf.CollectionOptions{
+		MapReplacements: bpfObjs.SharedObjs.Maps(),
+	}); err != nil {
 		return fmt.Errorf("error loading ebpf tracepoint programs: %w", err)
 	}
 
-	return nil
-}
-
-// LoadParsers load syscall parser programs
-func (l *BPFLoader) LoadParsers(progMap *ebpf.Map, scDataMap *ebpf.Map) error {
-	dir, err := fs.ReadDir(bstrace.BpfObjFS, "kprog/obj/parser")
+	parserCollections, err := l.LoadParsers("kprog/obj/parser", bpfObjs.SharedObjs)
 	if err != nil {
-		return fmt.Errorf("error reading ebpf program directory: %w", err)
+		return fmt.Errorf("error loading parser programs: %w", err)
 	}
-
-	var parserCollections []*ebpf.Collection
 
 	defer func() {
 		for _, obj := range parserCollections {
 			obj.Close()
 		}
 	}()
+
+	if err := fillProgArray(parserCollections, bpfObjs.TracepointsObjs.ProgMap); err != nil {
+		return fmt.Errorf("error filling parser program array: %w", err)
+	}
+
+	return nil
+}
+
+func fillProgArray(pc []*ebpf.Collection, progArray *ebpf.Map) error {
+	for _, parserCollection := range pc {
+		for name, program := range parserCollection.Programs {
+			var syscallNR uint32
+
+			if err := Variables(parserCollection.Variables).Get("SC_NR", &syscallNR); err != nil {
+				return fmt.Errorf("can't get prog syscall number; err: %w", err)
+			}
+
+			if err := progArray.Put(syscallNR, program); err != nil {
+				return fmt.Errorf("error putting program %s to map: %w", name, err)
+			}
+
+			log.Printf("Store program for syscall %d from %s to prog array", syscallNR, name)
+		}
+	}
+
+	return nil
+}
+
+// LoadParsers load syscall parser programs
+func (l *BPFLoader) LoadParsers(path string, sharedObjs *SharedObjs) ([]*ebpf.Collection, error) {
+	dir, err := fs.ReadDir(bstrace.BpfObjFS, path)
+	if err != nil {
+		return nil, fmt.Errorf("error reading ebpf program directory: %w", err)
+	}
+
+	var parserCollections []*ebpf.Collection
 
 	for _, d := range dir {
 		if d.IsDir() {
@@ -68,46 +87,22 @@ func (l *BPFLoader) LoadParsers(progMap *ebpf.Map, scDataMap *ebpf.Map) error {
 			continue
 		}
 
-		spec, err := l.LoadObjSpec("kprog/obj/parser/" + d.Name())
+		spec, err := l.LoadObjSpec(filepath.Join(path, d.Name()))
 		if err != nil {
-			return fmt.Errorf("error reading ebpf program file: %w", err)
+			return nil, fmt.Errorf("error reading ebpf program file: %w", err)
 		}
 
 		parserCollection, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{
-			MapReplacements: map[string]*ebpf.Map{
-				"sc_data": scDataMap,
-			},
+			MapReplacements: sharedObjs.Maps(),
 		})
 		if err != nil {
-			return fmt.Errorf("error loading parser collection %s: %w", parserCollection, err)
+			return nil, fmt.Errorf("error loading parser collection %s: %w", parserCollection, err)
 		}
 
 		parserCollections = append(parserCollections, parserCollection)
-
-		for name, program := range parserCollection.Programs {
-			var syscallNR uint32
-
-			for scName, v := range parserCollection.Variables {
-				if scName == "SC_NR" {
-					if err := v.Get(&syscallNR); err != nil {
-						return fmt.Errorf("error read %s variable for func %s: %w; var spec: %v", scName, name, err, parserCollection.Variables)
-					}
-					break
-				}
-
-				log.Printf("Not found variable '%s' for func %s; available var: %v", scName, name, parserCollection.Variables)
-			}
-
-			err = progMap.Put(syscallNR, program)
-			if err != nil {
-				return fmt.Errorf("error putting program %s to map: %w", name, err)
-			}
-
-			log.Printf("Store program syscall %d from %s to prog array", syscallNR, name)
-		}
 	}
 
-	return nil
+	return parserCollections, nil
 }
 
 type BPFLoader struct {
