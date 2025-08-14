@@ -2,29 +2,27 @@ package strace
 
 import (
 	"context"
-	"fmt"
 	"github.com/cilium/ebpf/link"
 	"github.com/ebirukov/bstrace"
 	"log"
 )
 
 func Run(_ context.Context) error {
-	tpObjs := &TracepointsObjs{}
+	bpfObjs := &BpfObjs{}
+
 	l := NewLoader(bstrace.BpfObjFS)
-	err := l.LoadBpfObjects(tpObjs)
+
+	defer bpfObjs.SharedObjs.Close()
+	defer bpfObjs.TracepointsObjs.Close()
+
+	err := l.LoadBpfObjects(bpfObjs)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	defer tpObjs.Close()
-
-	if err := l.LoadParsers(tpObjs.ProgMap, tpObjs.ScDataMap); err != nil {
-		return fmt.Errorf("error loading ebpf parser programs: %w", err)
-	}
-
 	lnk, err := link.AttachRawTracepoint(link.RawTracepointOptions{
 		Name:    "sys_exit",
-		Program: tpObjs.SyscallExit,
+		Program: bpfObjs.TracepointsObjs.SyscallExit,
 	})
 	if err != nil {
 		log.Fatalf("failed to attach raw tracepoint: %v", err)
@@ -34,7 +32,7 @@ func Run(_ context.Context) error {
 
 	lnk, err = link.AttachRawTracepoint(link.RawTracepointOptions{
 		Name:    "sys_enter",
-		Program: tpObjs.SyscallEnter,
+		Program: bpfObjs.TracepointsObjs.SyscallEnter,
 	})
 	if err != nil {
 		log.Fatalf("failed to attach raw tracepoint: %v", err)
@@ -42,7 +40,7 @@ func Run(_ context.Context) error {
 
 	defer lnk.Close()
 
-	if err := Trace(tpObjs.EventBuf); err != nil {
+	if err := Trace(bpfObjs.TracepointsObjs.EventBuf); err != nil {
 		return err
 	}
 
