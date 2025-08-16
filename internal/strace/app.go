@@ -8,7 +8,10 @@ import (
 )
 
 func Run(_ context.Context) error {
-	bpfObjs := &BpfObjs{}
+	bpfObjs := &BpfObjs{
+		SharedObjs:      &SharedObjs{},
+		TracepointsObjs: &TracepointsObjs{},
+	}
 
 	l := NewLoader(bstrace.BpfObjFS)
 
