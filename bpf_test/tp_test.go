@@ -1,41 +1,24 @@
 package bpf_test
 
 import (
-	"bytes"
+	"context"
 	"embed"
 	"encoding/binary"
-	"fmt"
 	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/ringbuf"
-	bpf "github.com/ebirukov/bstrace/bpf_test"
 	"github.com/ebirukov/bstrace/internal/strace"
-	"log"
+	"github.com/ebirukov/bstrace/internal/testutil"
+	"github.com/ebirukov/bstrace/pkg/abi"
+	extbytes "github.com/ebirukov/bstrace/pkg/bytes"
 	"reflect"
 	"testing"
-	"unsafe"
+	"time"
 )
 
 //go:embed kprog/obj/**
 var bpfObjFS embed.FS
 
 // support sign 5.10
-func TestProgramRunRawTracepoint(t *testing.T) {
-	testObjs := &strace.BpfObjs{
-		SharedObjs:      &strace.SharedObjs{},
-		TracepointsObjs: &strace.TracepointsObjs{},
-	}
-	l := strace.NewLoader(bpfObjFS)
-	err := l.LoadBpfObjects(testObjs)
-	if err != nil {
-		log.Fatalf("Error loading bpf objects: %v", err)
-	}
-
-	rd, err := ringbuf.NewReader(testObjs.TracepointsObjs.EventBuf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rd.Close()
-
+func TestSyscallTracepointLifecycle(t *testing.T) {
 	const (
 		SYS_BPF        = 321
 		BPF_PROG_LOAD  = 6
@@ -43,67 +26,97 @@ func TestProgramRunRawTracepoint(t *testing.T) {
 		FAKE_ATTR_SIZE = 123
 	)
 
-	var ctxBuf bytes.Buffer
-	if err := bpf.AppendSyscallArgs(&ctxBuf, BPF_PROG_LOAD, FAKE_ATTR_ADDR, FAKE_ATTR_SIZE); err != nil {
-		t.Fatal(fmt.Errorf("error write syscall args: %w", err))
+	testObjs := &strace.BpfObjs{
+		SharedObjs:      &strace.SharedObjs{},
+		TracepointsObjs: &strace.TracepointsObjs{},
+	}
+	l := strace.NewLoader(bpfObjFS)
+	if err := l.LoadBpfObjects(testObjs); err != nil {
+		t.Fatalf("Error loading bpf objects: %v", err)
 	}
 
-	if err := binary.Write(&ctxBuf, binary.LittleEndian, uint64(SYS_BPF)); err != nil { // SYS_bpf
-		t.Fatal("error write argument syscall_nr:", err)
+	type testCase struct {
+		name             string
+		syscallNr        uint64
+		arg1, arg2, arg3 uint64
+		retVal           int64
+		expected         *SyscallInfo
 	}
 
-	// Запускаем программу прикрепляемую raw_tp/sys_enter
-	ret, err := testObjs.TracepointsObjs.SyscallEnter.Run(&ebpf.RunOptions{
-		Context: ctxBuf.Bytes(),
-	})
-	if err != nil {
-		t.Fatal(err)
+	tests := []testCase{
+		{
+			name:      "bpf_prog_load",
+			syscallNr: SYS_BPF,
+			arg1:      BPF_PROG_LOAD,
+			arg2:      FAKE_ATTR_ADDR,
+			arg3:      FAKE_ATTR_SIZE,
+			retVal:    0,
+			expected: &SyscallInfo{
+				Nr:   SYS_BPF,
+				Arg1: BPF_PROG_LOAD,
+				Arg2: FAKE_ATTR_ADDR,
+				Arg3: FAKE_ATTR_SIZE,
+			},
+		},
 	}
 
-	if ret != 0 {
-		t.Error("Expected return value to be 0, got", ret)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
 
-	ctxBuf.Truncate(0)
-	if err := binary.Write(&ctxBuf, binary.LittleEndian, uint64(uintptr(unsafe.Pointer(&bpf.RegsX86{OrigRax: SYS_BPF})))); err != nil {
-		t.Fatal("write ptr:", err)
-	}
+			events, err := testutil.StartWatchRingReader[SyscallInfo](ctx, testObjs.TracepointsObjs.EventBuf)
+			if err != nil {
+				t.Fatalf("startRingReader failed: %v", err)
+			}
 
-	retVal := int64(0)
+			argsPtr, err := abi.CreateSyscallArgs(tt.syscallNr, tt.arg1, tt.arg2, tt.arg3)
+			if err != nil {
+				t.Fatalf("error create syscall args: %v", err)
+			}
 
-	if err := binary.Write(&ctxBuf, binary.LittleEndian, uint64(retVal)); err != nil {
-		t.Fatal("write retval:", err)
-	}
+			builder := extbytes.Builder{}
 
-	// Запускаем программу прикрепляемую raw_tp/sys_exit
-	ret, err = testObjs.TracepointsObjs.SyscallExit.Run(&ebpf.RunOptions{
-		Context: ctxBuf.Bytes(),
-	})
-	if err != nil {
-		t.Fatalf("run failed: %v", err)
-	}
+			enterCtx := builder.Reset().
+				WritePointer(binary.LittleEndian, argsPtr).
+				WriteUint64(binary.LittleEndian, tt.syscallNr).
+				Bytes()
 
-	if ret != 0 {
-		t.Errorf("expected return 0, got %d", ret)
-	}
+			if ret, err := testObjs.TracepointsObjs.SyscallEnter.Run(&ebpf.RunOptions{
+				Context: enterCtx,
+			}); err != nil {
+				t.Fatalf("SyscallEnter failed: %v", err)
+			} else if ret != 0 {
+				t.Errorf("SyscallEnter returned non-zero: %d", ret)
+			}
 
-	record, err := rd.Read()
-	if err != nil {
-		t.Errorf("Error reading record: %v", err)
-	}
+			exitCtx := builder.Reset().
+				WritePointer(binary.LittleEndian, argsPtr).
+				WriteInt64(binary.LittleEndian, tt.retVal).
+				Bytes()
 
-	info := SyscallInfo{}
-	if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &info); err != nil {
-		log.Printf("parsing ringbuf event: %s", err)
-	}
+			if ret, err := testObjs.TracepointsObjs.SyscallExit.Run(&ebpf.RunOptions{
+				Context: exitCtx,
+			}); err != nil {
+				t.Fatalf("SyscallExit failed: %v", err)
+			} else if ret != 0 {
+				t.Errorf("SyscallExit returned non-zero: %d", ret)
+			}
 
-	if !reflect.DeepEqual(info, SyscallInfo{
-		Nr:   SYS_BPF,
-		Arg1: BPF_PROG_LOAD,
-		Arg2: FAKE_ATTR_ADDR,
-		Arg3: FAKE_ATTR_SIZE,
-	}) {
-		t.Errorf("Unexpected SyscallInfo: %v", info)
+			select {
+			case <-ctx.Done():
+				t.Fatalf("Timeout waiting for event: %v", context.Cause(ctx))
+			case info := <-events:
+				if info == nil {
+					t.Fatal("Received nil syscall info")
+				}
+				if !reflect.DeepEqual(info, tt.expected) {
+					t.Errorf("Unexpected syscall info:\n  got:  %+v\n  want: %+v", info, tt.expected)
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatal("Timeout waiting for syscall info")
+			}
+		})
 	}
 }
 
