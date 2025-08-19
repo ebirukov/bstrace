@@ -5,10 +5,12 @@ import (
 	"embed"
 	"encoding/binary"
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/rlimit"
 	"github.com/ebirukov/bstrace/internal/strace"
 	"github.com/ebirukov/bstrace/internal/testutil"
 	"github.com/ebirukov/bstrace/pkg/abi"
 	extbytes "github.com/ebirukov/bstrace/pkg/bytes"
+	"log"
 	"reflect"
 	"testing"
 	"time"
@@ -16,6 +18,13 @@ import (
 
 //go:embed kprog/obj/**
 var bpfObjFS embed.FS
+
+func TestMain(m *testing.M) {
+	if err := rlimit.RemoveMemlock(); err != nil {
+		log.Fatal(err)
+	}
+	m.Run()
+}
 
 // support sign 5.10
 func TestSyscallTracepointLifecycle(t *testing.T) {

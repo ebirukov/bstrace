@@ -50,3 +50,92 @@ tasks:
             clang -target bpf {{.CFLAGS}} -c {{.FILE}} -o $OUT -I.{{.BPF_HEADER_DIR}}
             echo "✔ Compiled {{.FILE}} → $OUT"
           fi
+
+  bpf-test-build-initramfs-arm64:
+    cmds:
+      - task: bpf-test-build-initramfs
+        vars:
+          ARCH_BUILD: "arm64"
+
+  bpf-test-build-initramfs:
+    desc: "Собирает initramfs под заданную платформенную архитектуру"
+    dir: "bpf_test"
+    vars:
+      ARCH_BUILD: "{{.ARCH_BUILD | default `amd64` }}"
+      FS_ROOT_DIR: "build/{{.ARCH_BUILD}}/initramfs"
+    cmds:
+      - task: bpf-test-build-exec
+        vars:
+          ARCH_BUILD: "{{.ARCH_BUILD}}"
+      - |
+        rm -rf {{.FS_ROOT_DIR}}/*
+        mkdir -p {{.FS_ROOT_DIR}}/boot
+        cp build/{{.ARCH_BUILD}}/bin/* {{.FS_ROOT_DIR}}
+        cp kernel/{{.ARCH_BUILD}}/btf/* {{.FS_ROOT_DIR}}/boot/
+        
+
+  bpf-test-build-exec:
+    desc: "Собирает бинарники под заданную платформенную архитектуру"
+    vars:
+      BUILD_DIR: "build/{{.ARCH_BUILD}}/bin"
+    dir: "bpf_test"
+    cmds:
+      - |
+        mkdir -p {{.BUILD_DIR}}
+      - task: bpf-test-compile-arch
+        vars:
+          BUILD_DIR: "{{.BUILD_DIR}}"
+          ARCH_BUILD: "{{.ARCH_BUILD}}"
+
+  bpf-test-compile-arch:
+    desc: "Компилирует тесты под заданную платформенную архитектуру"
+    vars:
+      ARCH_BUILD: "{{.ARCH_BUILD | default `amd64` }}"
+    dir: "bpf_test"
+    cmds:
+      - |
+      - echo "Compile test-runner as {{.ARCH_BUILD}}"
+      - go build -o {{.BUILD_DIR}}/init ./cmd/os-init-runner
+      - |
+        echo "Compile test as {{.ARCH_BUILD}}"
+        go test -c -o {{.BUILD_DIR}}/test
+    env:
+      GOARCH: "{{.ARCH_BUILD | default .ARCH_OS }}"
+      GOOS: "linux"
+
+
+
+
+
+
+
+
+
+
+
+
+#  download-firecracker:
+#    desc: "Компилирует"
+#    cmds:
+#      - for: [ x86_64, aarch64 ]
+#        task: download-firecracker-arch
+#        vars:
+#          ARCH_OVERRIDE: "{{.ITEM}}"
+#
+#  download-firecracker-arch:
+#    desc: "Download and extract Firecracker binary for specified architecture"
+#    vars:
+#      FIRECRACKER_VERSION: "v1.12.1"
+#      ARCH: "{{.ARCH_OVERRIDE | default `x86_64`}}"
+#      BINARY_NAME: "firecracker-{{.FIRECRACKER_VERSION}}-{{.ARCH}}"
+#      BASE_URL: "https://github.com/firecracker-microvm/firecracker/releases/download/{{.FIRECRACKER_VERSION}}/{{.BINARY_NAME}}.tgz"
+#      BIN_PATH: "bin/{{.BINARY_NAME}}"
+#    cmds:
+#      - mkdir -p bin
+#      - |
+#        echo "📥 Downloading Firecracker {{.FIRECRACKER_VERSION}} for {{.ARCH}}..."
+#        curl -sL "{{.BASE_URL}}" | \
+#          tar -xz -C bin --strip-components=1 "release-{{.FIRECRACKER_VERSION}}-{{.ARCH}}/{{.BINARY_NAME}}"
+#      - chmod +x "{{.BIN_PATH}}"
+#    status:
+#      - test -f "{{.BIN_PATH}}"
