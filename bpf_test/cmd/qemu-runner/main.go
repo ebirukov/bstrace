@@ -78,7 +78,7 @@ func main() {
 	}
 
 	defer func() {
-		initrdFile.Close()
+		_ = initrdFile.Close()
 		if err := os.Remove(initrdFile.Name()); err != nil {
 			log.Fatalf("could not remove initramfs.cpio: %v", err)
 		}
@@ -93,16 +93,16 @@ func main() {
 	case "amd64":
 		argsEnv = getEnv(
 			"QEMU_ARGS",
-			"-machine pc -nographic -no-reboot -append console=ttyS0")
+			"-machine  pc  -nographic  -no-reboot  -append  console=ttyS0 quiet")
 	case "arm64":
 		argsEnv = getEnv(
 			"QEMU_ARGS",
-			"-machine virt -cpu cortex-a53 -nographic -no-reboot -append console=ttyAMA0")
+			"-machine  virt  -cpu  cortex-a53  -nographic  -no-reboot  -append  console=ttyAMA0 quiet")
 	default:
 		log.Fatalf("unknown architecture: %s", arch)
 	}
 
-	vmArgs := strings.Split(argsEnv, " ")
+	vmArgs := strings.Split(argsEnv, "  ")
 	vmArgs = append(vmArgs,
 		"-kernel", kernelPath,
 		"-initrd", initrdFile.Name())

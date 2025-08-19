@@ -51,11 +51,62 @@ tasks:
             echo "✔ Compiled {{.FILE}} → $OUT"
           fi
 
-  bpf-test-build-initramfs-arm64:
-    cmds:
+  bpf-test-install-runner:
+    desc: "устанавливает бинарник запускающий тесты на qemu"
+    dir: bpf_test
+    vars:
+      BUILD_DIR:
+        sh: pwd
+    cmd: |
+      echo "install qemu-runner to {{.BUILD_DIR}}/build"
+      go install ./cmd/qemu-runner/
+    env:
+      GOBIN: "{{.BUILD_DIR}}/build"
+    status:
+      - test -f {{.BUILD_DIR}}/build/qemu-runner
+
+  bpf-test-run-arch:
+    desc: "Запуск тестов bpf для заданной архитектуры"
+    dir: bpf_test
+    deps:
+      - task: bpf-test-install-runner
       - task: bpf-test-build-initramfs
         vars:
-          ARCH_BUILD: "arm64"
+          ARCH_BUILD: "{{.QEMU_ARCH | default `amd64` }}"
+    vars:
+      KERNEL_FILES:
+        sh: find kernel/{{.QEMU_ARCH}} \( -name 'linux-*' -o -name 'vmlinuz-*' \) ! -name '*.btf'
+    cmds:
+      - for:
+          var: KERNEL_FILES
+        task: bpf-test-run-arch-kernel
+        vars:
+          FILE: "{{.ITEM}}"
+          QEMU_ARCH: "{{.QEMU_ARCH}}"
+
+  bpf-test-run-arch-kernel:
+    desc: "Запуск тестов bpf для заданной архитектуры на выбранном ядре"
+    dir: bpf_test
+    vars:
+      FS_ROOT_DIR: "build/{{.QEMU_ARCH}}/initramfs"
+      PWD:
+        sh: pwd
+    cmds:
+      - |
+        mkdir -p {{.FS_ROOT_DIR}}/sys/kernel/btf
+        cp {{.FILE}}.btf {{.FS_ROOT_DIR}}/sys/kernel/btf/vmlinux
+      - |
+        echo "run test on arch {{.QEMU_ARCH}} with kernel {{.FILE}}"
+        {{.PWD}}/build/qemu-runner -kernel {{.FILE}}
+    env:
+      QEMU_ARCH: "{{.QEMU_ARCH}}"
+
+  bpf-test-run:
+    cmds:
+      - for: [ arm64, amd64 ]
+        task: bpf-test-run-arch
+        vars:
+          QEMU_ARCH: "{{.ITEM}}"
 
   bpf-test-build-initramfs:
     desc: "Собирает initramfs под заданную платформенную архитектуру"
@@ -69,9 +120,8 @@ tasks:
           ARCH_BUILD: "{{.ARCH_BUILD}}"
       - |
         rm -rf {{.FS_ROOT_DIR}}/*
-        mkdir -p {{.FS_ROOT_DIR}}/boot
+        mkdir -p {{.FS_ROOT_DIR}}
         cp build/{{.ARCH_BUILD}}/bin/* {{.FS_ROOT_DIR}}
-        cp kernel/{{.ARCH_BUILD}}/btf/* {{.FS_ROOT_DIR}}/boot/
         
 
   bpf-test-build-exec:
@@ -94,48 +144,11 @@ tasks:
     dir: "bpf_test"
     cmds:
       - |
-      - echo "Compile test-runner as {{.ARCH_BUILD}}"
-      - go build -o {{.BUILD_DIR}}/init ./cmd/os-init-runner
+        echo "Compile test-runner as {{.ARCH_BUILD}}"
+        go build -o {{.BUILD_DIR}}/init ./cmd/os-init-runner
       - |
         echo "Compile test as {{.ARCH_BUILD}}"
         go test -c -o {{.BUILD_DIR}}/test
     env:
       GOARCH: "{{.ARCH_BUILD | default .ARCH_OS }}"
       GOOS: "linux"
-
-
-
-
-
-
-
-
-
-
-
-
-#  download-firecracker:
-#    desc: "Компилирует"
-#    cmds:
-#      - for: [ x86_64, aarch64 ]
-#        task: download-firecracker-arch
-#        vars:
-#          ARCH_OVERRIDE: "{{.ITEM}}"
-#
-#  download-firecracker-arch:
-#    desc: "Download and extract Firecracker binary for specified architecture"
-#    vars:
-#      FIRECRACKER_VERSION: "v1.12.1"
-#      ARCH: "{{.ARCH_OVERRIDE | default `x86_64`}}"
-#      BINARY_NAME: "firecracker-{{.FIRECRACKER_VERSION}}-{{.ARCH}}"
-#      BASE_URL: "https://github.com/firecracker-microvm/firecracker/releases/download/{{.FIRECRACKER_VERSION}}/{{.BINARY_NAME}}.tgz"
-#      BIN_PATH: "bin/{{.BINARY_NAME}}"
-#    cmds:
-#      - mkdir -p bin
-#      - |
-#        echo "📥 Downloading Firecracker {{.FIRECRACKER_VERSION}} for {{.ARCH}}..."
-#        curl -sL "{{.BASE_URL}}" | \
-#          tar -xz -C bin --strip-components=1 "release-{{.FIRECRACKER_VERSION}}-{{.ARCH}}/{{.BINARY_NAME}}"
-#      - chmod +x "{{.BIN_PATH}}"
-#    status:
-#      - test -f "{{.BIN_PATH}}"
