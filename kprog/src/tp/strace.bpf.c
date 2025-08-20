@@ -107,8 +107,8 @@ int BPF_PROG(sc_exit, struct pt_regs *regs, __s64 ret)
         return 0;
     }
 
-    *event = *info;  // копируем данные о системном вызове в кольцевой буфер
-    bpf_map_delete_elem(&sc_data, &tid); //удаляем временные данные из карты
+    *event = *info;  // копируем данные о системном вызове из map sc_data в кольцевой буфер
+    bpf_map_delete_elem(&sc_data, &tid); //возможно лишним будет удалять временные данные из карты?
 
     bpf_ringbuf_submit(event, 0);
 

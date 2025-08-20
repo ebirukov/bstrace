@@ -51,6 +51,32 @@ tasks:
             echo "✔ Compiled {{.FILE}} → $OUT"
           fi
 
+  bpf-clear:
+    desc: "Очищает директории с скомпидированными объектными файлами"
+    vars:
+      BPF_OBJ_DIR: "kprog/obj/"
+    cmds:
+      - |
+        rm -rf {{.BPF_OBJ_DIR}}
+
+  bpf-test-obj-clear:
+    desc: "Очищает директории с скомпидированными файлами"
+    dir: bpf_test
+    vars:
+      BPF_OBJ_DIR: "kprog/obj/"
+    cmds:
+      - |
+        rm -rf {{.BPF_OBJ_DIR}}
+
+  bpf-test-build-clear:
+    desc: "Очищает директории со сборкой для запуска тестов"
+    dir: bpf_test
+    vars:
+      BUILD_DIR: "build/"
+    cmds:
+      - |
+        rm -rf {{.BUILD_DIR}}
+
   bpf-test-install-runner:
     desc: "устанавливает бинарник запускающий тесты на qemu"
     dir: bpf_test
@@ -64,6 +90,14 @@ tasks:
       GOBIN: "{{.BUILD_DIR}}/build"
     status:
       - test -f {{.BUILD_DIR}}/build/qemu-runner
+
+  bpf-test:
+    requires:
+      vars: [QEMU_ARCH]
+    vars:
+      ARCH_BUILD: "{{.QEMU_ARCH | default `amd64` }}"
+    cmds:
+      - echo "{{.ARCH_BUILD}}"
 
   bpf-test-run-arch:
     desc: "Запуск тестов bpf для заданной архитектуры"
@@ -86,6 +120,8 @@ tasks:
 
   bpf-test-run-arch-kernel:
     desc: "Запуск тестов bpf для заданной архитектуры на выбранном ядре"
+    requires:
+      vars: [QEMU_ARCH, FILE]
     dir: bpf_test
     vars:
       FS_ROOT_DIR: "build/{{.QEMU_ARCH}}/initramfs"
