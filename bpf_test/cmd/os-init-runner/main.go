@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"github.com/ebirukov/bstrace/pkg/debug"
 	"log"
 	"os"
 	"os/exec"
@@ -20,7 +22,19 @@ func main() {
 	}
 
 	cmd := exec.Command("/" + binExecFile)
-	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = log.Writer(), log.Writer(), os.Stdin
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer cancel()
+
+	go func() {
+		if err := debug.Attach(ctx, log.Writer()); err != nil {
+			log.Printf("error trace log: %v", err)
+		}
+	}()
+
 	if err := cmd.Run(); err != nil {
 		log.Printf("could not run process: %v", err)
 	}
