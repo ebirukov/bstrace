@@ -93,11 +93,11 @@ func main() {
 	case "amd64":
 		argsEnv = getEnv(
 			"QEMU_ARGS",
-			"-machine  pc  -nographic  -no-reboot  -append  console=ttyS0 quiet")
+			"-enable-kvm  -nodefaults  -serial  mon:stdio  -display  none  -no-reboot  -append  console=ttyS0 quiet ")
 	case "arm64":
 		argsEnv = getEnv(
 			"QEMU_ARGS",
-			"-machine  virt  -cpu  cortex-a53  -nographic  -no-reboot  -append  console=ttyAMA0 quiet")
+			"-nodefaults  -serial  mon:stdio  -machine  virt  -cpu  cortex-a53  -nographic  -no-reboot  -append  console=ttyAMA0 quiet")
 	default:
 		log.Fatalf("unknown architecture: %s", arch)
 	}
