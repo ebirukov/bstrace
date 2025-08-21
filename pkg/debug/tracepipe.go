@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -64,6 +65,11 @@ func Attach(ctx context.Context, out io.Writer) error {
 			log.Printf("error read from trace pipe: %v", err)
 			time.Sleep(retryTimeout)
 
+			continue
+		}
+
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
 			continue
 		}
 

@@ -36,7 +36,7 @@ int BPF_PROG(bpf_syscall, struct pt_regs *pt_regs, __s64 syscall_nr) {
 
     // Заполняем структуру прямо в карте
     info->syscall_nr = syscall_nr;
-    info->sc_arg1    = cmd;
+    info->sc_arg1    = sc_args.arg1;
     info->sc_arg2    = sc_args.arg2;
     info->sc_arg3    = sc_args.arg3;
 
@@ -46,16 +46,15 @@ int BPF_PROG(bpf_syscall, struct pt_regs *pt_regs, __s64 syscall_nr) {
     if (cmd == 6) {
         bpf_printk("pathname_ptr=0x%llx bpf_fd=%u flags=%u\n",
                    info->attr.pathname,
-                   info->attr.bpf_fd,
                    info->attr.file_flags);
     }
     if (cmd == 0) {
-        bpf_printk("map_type=%u key_size=%u value_size=%u max_entries=%u btf_fd=%u\n",
+        bpf_printk("map_type=%u key_size=%u value_size=%u\n",
                    info->attr.map_type,
                    info->attr.key_size,
-                   info->attr.value_size,
-                   info->attr.max_entries,
-                   info->attr.btf_fd);
+                   info->attr.value_size);//,
+                   //info->attr.max_entries,
+//                   info->attr.btf_fd);
     }
 
     bpf_printk("bpf_syscall: cmd=%lu, attr=0x%lx, size=%lu\n", cmd, attr, size);

@@ -14,6 +14,16 @@ import (
 	"time"
 )
 
+var defaultKernelArgs = map[string]string{
+	"amd64": "console=ttyS0 quiet",
+	"arm64": "console=ttyAMA0 cma=0 audit=0 nowatchdog nosmp maxcpus=1 ipv6.disable=1 net.ifnames=0 lsm= acpi=off ima_appraise=off quiet",
+}
+
+var defaultQemuArgs = map[string]string{
+	"amd64": "-enable-kvm -nodefaults -serial mon:stdio -display none -no-reboot",
+	"arm64": "-nodefaults -serial mon:stdio -machine virt -cpu cortex-a53 -nographic -no-reboot",
+}
+
 // QemuRunner - утилита для запуска ядра Linux в QEMU с автоматическим созданием initramfs.
 //
 // Примеры использования:
@@ -44,11 +54,12 @@ import (
 // - Обрабатывает таймауты и сигналы завершения
 // - Автоматически очищает временные файлы
 func main() {
+	log.SetPrefix("qemu-runner: ")
 	arch := getEnv("QEMU_ARCH", runtime.GOARCH)
 
 	kernelPathVar := flag.String("kernel", "", "Path to linux kernel image")
 	initRootFS := flag.String("rootfs", "build/"+arch+"/initramfs/", "Path to initramfs root directory")
-	timeoutVar := flag.Duration("timeout", 30*time.Second, "Max time of qemu execution")
+	timeoutVar := flag.Duration("timeout", 10*time.Second, "Max time of qemu execution")
 
 	flag.Parse()
 
@@ -65,14 +76,7 @@ func main() {
 
 	defer cancel()
 
-	pwd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("could not get current working dir: %v", err)
-	}
-
-	log.Printf("current working dir: %s", pwd)
-
-	initrdFile, err := os.CreateTemp(pwd, "initramfs.cpio")
+	initrdFile, err := os.CreateTemp("", "initramfs.cpio")
 	if err != nil {
 		log.Fatalf("could not create file initramfs.cpio: %v", err)
 	}
@@ -88,24 +92,19 @@ func main() {
 		log.Fatalf("could not create cpio fs %s: %v", initrdFile.Name(), err)
 	}
 
-	var argsEnv string
+	var vmArgs []string
 	switch arch {
-	case "amd64":
-		argsEnv = getEnv(
-			"QEMU_ARGS",
-			"-enable-kvm  -nodefaults  -serial  mon:stdio  -display  none  -no-reboot  -append  console=ttyS0 quiet ")
-	case "arm64":
-		argsEnv = getEnv(
-			"QEMU_ARGS",
-			"-nodefaults  -serial  mon:stdio  -machine  virt  -cpu  cortex-a53  -nographic  -no-reboot  -append  console=ttyAMA0 quiet")
+	case "amd64", "arm64":
+		kernelArgs := getEnv("KERNEL_ARGS", defaultKernelArgs[arch])
+		argsEnv := getEnv("QEMU_ARGS", defaultQemuArgs[arch])
+		vmArgs = strings.Fields(argsEnv)
+		vmArgs = append(vmArgs,
+			"-append", kernelArgs,
+			"-kernel", kernelPath,
+			"-initrd", initrdFile.Name())
 	default:
 		log.Fatalf("unknown architecture: %s", arch)
 	}
-
-	vmArgs := strings.Split(argsEnv, "  ")
-	vmArgs = append(vmArgs,
-		"-kernel", kernelPath,
-		"-initrd", initrdFile.Name())
 
 	defaultVal := strings.Join([]string{"qemu-system", arch}, "-")
 	cmdStr := getEnv("QEMU_BIN", defaultVal)

@@ -40,7 +40,7 @@ static __always_inline u32 bpf_get_syscall_nr(struct pt_regs *regs) {
 #if defined(__TARGET_ARCH_x86)
     return BPF_CORE_READ_AUTO(regs, orig_ax);
 #elif defined(__TARGET_ARCH_arm64)
-    return BPF_CORE_READ_AUTO(regs, syscallno);
+    return BPF_CORE_READ_AUTO(regs, regs[8]);
 #elif defined(__TARGET_ARCH_s390)
     return BPF_CORE_READ_AUTO(regs, int_code) >> 16;
 #elif defined(__TARGET_ARCH_riscv)
@@ -66,10 +66,20 @@ static __always_inline void fill_syscall_args(struct pt_regs *pt_regs, struct sy
     pt_regs = &tmp;
 #endif
 
+#ifdef __TARGET_ARCH_arm64
+    // На arm64 читаем напрямую через смещения, т.к. PT_REGS_PARM1_CORE_SYSCALL некорректно читает pt_regs
+    args->arg1 = BPF_CORE_READ(pt_regs, regs[0]);
+    args->arg2 = BPF_CORE_READ(pt_regs, regs[1]);
+    args->arg3 = BPF_CORE_READ(pt_regs, regs[2]);
+    args->arg4 = BPF_CORE_READ(pt_regs, regs[3]);
+    args->arg5 = BPF_CORE_READ(pt_regs, regs[4]);
+    args->arg6 = BPF_CORE_READ(pt_regs, regs[5]);
+#else
     args->arg1 = PT_REGS_PARM1_CORE_SYSCALL(pt_regs);
     args->arg2 = PT_REGS_PARM2_CORE_SYSCALL(pt_regs);
     args->arg3 = PT_REGS_PARM3_CORE_SYSCALL(pt_regs);
     args->arg4 = PT_REGS_PARM4_CORE_SYSCALL(pt_regs);
     args->arg5 = PT_REGS_PARM5_CORE_SYSCALL(pt_regs);
     args->arg6 = PT_REGS_PARM6_CORE_SYSCALL(pt_regs);
+#endif
 }
